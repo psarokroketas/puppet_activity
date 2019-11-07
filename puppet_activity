@@ -1,0 +1,87 @@
+#!/usr/bin/env python
+
+import json
+import logging
+from argparse import ArgumentParser
+import gitlab
+import yaml
+import requests
+
+from aitools.config import AiConfig, ForemanConfig, PdbConfig
+from configrundeckscripts.common import (configure_logging,
+                                         get_git_client,
+                                         GITLAB_AI_NAMESPACE_NAME)
+
+
+EGREP_PATH = '/mnt/puppetnfsdir/environments/production'
+FUNCTIONS_PATH = '/mnt/puppetnfsdir/environments/production/modules/%s/lib/puppet/parser/functions'
+METADATA_PROJECT = 'it-puppet-repository-metadata'
+MODULE_PREFIX = 'it-puppet-module-'
+REPOSITORIES_FILE = 'repositories.yaml'
+
+
+def get_repositories(gitlab_client):
+    try:
+        logging.info('Getting %s reference', METADATA_PROJECT)
+        project = gitlab_client.projects.get('%s/%s' % (GITLAB_AI_NAMESPACE_NAME,
+                                                        METADATA_PROJECT))
+
+        logging.info('Getting id for %s', REPOSITORIES_FILE)
+        file_id = [entry['id']
+                   for entry in project.repository_tree()
+                   if entry['name'] == REPOSITORIES_FILE][0]
+
+        logging.info('Fetching and parsing %s file content', REPOSITORIES_FILE)
+        data = yaml.load(project.repository_raw_blob(file_id))
+        return (data['repositories']['hostgroups'],
+                data['repositories']['modules'])
+    except gitlab.exceptions.GitlabGetError as error:
+        logging.error('Error querying metadata project (%s)', error)
+
+
+def parse_arguments():
+    parser = ArgumentParser(
+        description="Check for hostgroups and modules not being used")
+
+    ForemanConfig().add_standard_args(parser)
+    PdbConfig().add_standard_args(parser)
+    args = parser.parse_args()
+    AiConfig().read_config_and_override_with_pargs(args)
+
+    return args
+
+
+def send(document):
+    response = requests.post('http://monit-metrics.cern.ch:10012',
+                             data=json.dumps(document),
+                             headers={'Content-Type': 'application/json'})
+
+    if response.status_code == requests.codes.ok:
+        logging.info("Payload sent")
+    else:
+        logging.error("Problem sending payload")
+
+def main():
+    configure_logging()
+
+    gitlab_client = get_git_client()
+
+
+    if not gitlab_client:
+        logging.error('Unable to init() a GitLab client')
+        return 1
+
+    hostgroups, modules = get_repositories(gitlab_client)
+    payload = [{
+        'producer': 'kpi',
+        'type': 'service',
+        'serviceid': 'cfg',
+        'service_status': 'available',
+        'hostgroups': str(len(hostgroups)),
+        'modules': str(len(modules))
+    }]
+    send(payload)
+
+if __name__ == '__main__':
+    main()
+
