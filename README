@@ -1,0 +1,21 @@
+This project goes through gitlab and sends a KPI to an endpoint
+The KPIs are about the number of hostgroups and modules that are using puppet 
+
+
+get_repositories:
+    ->connnects to gitlab and gets all the repositories from a yaml file (repositories.yaml) that had these info
+    ->fetches and parses the yaml file 
+    ->and depenting on the name seperates them from hostgroups and modules
+    
+
+
+parse_arguments:
+    creates all the arguments needed
+
+
+def send(document)
+    sends the KPI to the monitorings infrustractor's endpoint 
+
+
+def main() :
+   if it able to connect to gitlab it gives a KPI with the number of hostgroups and modules, otherwise pops up an error
